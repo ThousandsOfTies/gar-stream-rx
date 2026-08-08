@@ -61,7 +61,7 @@ COLORBAR_PIPELINE_FRAGMENT = (
 SINK_CHAIN = (
     "input-selector name=sel "
     "! videobalance name=bal brightness=0.0 contrast=1.0 "
-    '! textoverlay name=osd text="" silent=true valignment=top halignment=left '
+    '! textoverlay name=osd text="" silent=true shaded-background=true valignment=top halignment=left '
     'font-desc="Sans 14" '
     "! videoconvert "
     f"! video/x-raw,format=RGB16,width={WIDTH},height={HEIGHT} "
