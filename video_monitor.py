@@ -40,7 +40,7 @@ WIDTH, HEIGHT, FPS = 320, 240, 15
 # no hardware video decoder, and MJPEG's independent frames tolerate UDP packet
 # loss much better than an H.264 GOP would. See README "Codec choice" section.
 RX_PIPELINE_FRAGMENT = (
-    "udpsrc port=5600 "
+    "udpsrc name=rx_source port=5600 "
     'caps="application/x-rtp,media=video,encoding-name=JPEG,payload=26" '
     "! rtpjitterbuffer latency=100 "
     "! rtpjpegdepay ! jpegdec "
@@ -93,17 +93,28 @@ class VideoMonitor:
         self.bal = self.pipeline.get_by_name("bal")
         self.osd = self.pipeline.get_by_name("osd")
         self.sink = self.pipeline.get_by_name("sink")
+        self.rx_source = self.pipeline.get_by_name("rx_source")
+        self.received_first_packet = False
 
         self.pad_colorbar = self.sel.get_static_pad("sink_0")
         self.pad_rx = self.sel.get_static_pad("sink_1")
 
         self.sink.connect("new-sample", self._on_new_sample)
+        self.rx_source.get_static_pad("src").add_probe(
+            Gst.PadProbeType.BUFFER, self._on_rtp_packet
+        )
 
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
 
     # -- GStreamer callbacks ------------------------------------------------
+    def _on_rtp_packet(self, _pad, _info):
+        if not self.received_first_packet:
+            self.received_first_packet = True
+            print("[stream_rx] first RTP packet received")
+        return Gst.PadProbeReturn.OK
+
     def _on_new_sample(self, sink):
         sample = sink.emit("pull-sample")
         if sample is None:
