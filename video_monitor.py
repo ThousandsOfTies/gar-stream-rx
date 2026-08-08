@@ -79,7 +79,7 @@ class VideoMonitor:
     def __init__(self, display):
         self.display = display
         self.state = {
-            "mode": "VIEW",       # VIEW | MENU | ADJUST
+            "mode": "VIEW",       # VIEW | MENU | SUBMENU
             "source": os.environ.get("GAR_INITIAL_VIDEO_SOURCE", "COLORBAR"), # COLORBAR | RX
             "menu_index": 0,
             "brightness": 0.0,    # videobalance range: -1.0 .. 1.0
@@ -147,29 +147,38 @@ class VideoMonitor:
         self.apply_source()
 
     def update_osd_text(self):
-        lines = []
-        for i, item in enumerate(MENU_ITEMS):
-            cursor = ">" if i == self.state["menu_index"] else " "
+        item = MENU_ITEMS[self.state["menu_index"]]
+        if self.state["mode"] == "SUBMENU":
             if item == "INPUT":
-                value = self.state["source"]
+                lines = ["RX MENU > INPUT"]
+                for source in ("COLORBAR", "RX"):
+                    cursor = ">" if source == self.state["source"] else " "
+                    lines.append(f"{cursor} {source}")
             elif item == "BRIGHTNESS":
-                value = f"{self.state['brightness']:+.2f}"
-            elif item == "CONTRAST":
-                value = f"{self.state['contrast']:.2f}"
+                lines = ["RX MENU > BRIGHTNESS", f"> BRIGHTNESS {self.state['brightness']:+.2f}"]
             else:
-                value = ""
-            adj = " [adjusting]" if (self.state["mode"] == "ADJUST" and i == self.state["menu_index"]) else ""
-            lines.append(f"{cursor} {item} {value}{adj}".rstrip())
+                lines = ["RX MENU > CONTRAST", f"> CONTRAST   {self.state['contrast']:.2f}"]
+        else:
+            lines = ["RX MENU"]
+            for i, menu_item in enumerate(MENU_ITEMS):
+                cursor = ">" if i == self.state["menu_index"] else " "
+                if menu_item == "INPUT":
+                    value = self.state["source"]
+                elif menu_item == "BRIGHTNESS":
+                    value = f"{self.state['brightness']:+.2f}"
+                elif menu_item == "CONTRAST":
+                    value = f"{self.state['contrast']:.2f}"
+                else:
+                    value = ""
+                lines.append(f"{cursor} {menu_item:<11}{value}".rstrip())
         self.osd.set_property("text", "\n".join(lines))
 
     def on_rotate(self, direction, _counter):
         mode = self.state["mode"]
-        if mode == "VIEW":
-            self.toggle_source()
-        elif mode == "MENU":
+        if mode == "MENU":
             self.state["menu_index"] = (self.state["menu_index"] + direction) % len(MENU_ITEMS)
             self.update_osd_text()
-        elif mode == "ADJUST":
+        elif mode == "SUBMENU":
             item = MENU_ITEMS[self.state["menu_index"]]
             if item == "INPUT":
                 self.toggle_source()
@@ -194,9 +203,9 @@ class VideoMonitor:
                 self.state["mode"] = "VIEW"
                 self.osd.set_property("silent", True)
             else:
-                self.state["mode"] = "ADJUST"
+                self.state["mode"] = "SUBMENU"
                 self.update_osd_text()
-        elif mode == "ADJUST":
+        elif mode == "SUBMENU":
             self.state["mode"] = "MENU"
             self.update_osd_text()
 
@@ -235,7 +244,7 @@ def main():
     monitor.start()
 
     loop = GLib.MainLoop()
-    print("Running. Rotate KY-040 to switch INPUT (colorbar/RX), press to open the menu. Ctrl+C to quit.")
+    print("Running. Press KY-040 for the RX menu; rotate to select/change. Ctrl+C to quit.")
     try:
         loop.run()
     except KeyboardInterrupt:
