@@ -9,6 +9,7 @@ brightness-contrast/OSD text), this script only does two things:
 Requires PyGObject + the GStreamer 1.0 typelib on the board (system packages
 from Buildroot, not pip - see README.md "Buildroot packages needed").
 """
+import os
 import sys
 
 import gi
@@ -23,11 +24,11 @@ CONFIG = {
     "spi_bus": 0,
     "spi_device": 0,
     "spi_max_hz": 24_000_000,  # bump via `luckfox-config` SPI speed - see README bandwidth note
-    "dc_gpio": None,           # <- fill in from `luckfox-config show`
-    "rst_gpio": None,          # <- fill in from `luckfox-config show`
-    "enc_clk_gpio": None,      # <- fill in from `luckfox-config show`
-    "enc_dt_gpio": None,       # <- fill in from `luckfox-config show`
-    "enc_sw_gpio": None,       # <- fill in from `luckfox-config show`
+    "dc_gpio": int(os.environ["GAR_LCD_DC_GPIO"]) if os.environ.get("GAR_LCD_DC_GPIO") else None,
+    "rst_gpio": int(os.environ["GAR_LCD_RST_GPIO"]) if os.environ.get("GAR_LCD_RST_GPIO") else None,
+    "enc_clk_gpio": int(os.environ["GAR_ENC_CLK_GPIO"]) if os.environ.get("GAR_ENC_CLK_GPIO") else None,
+    "enc_dt_gpio": int(os.environ["GAR_ENC_DT_GPIO"]) if os.environ.get("GAR_ENC_DT_GPIO") else None,
+    "enc_sw_gpio": int(os.environ["GAR_ENC_SW_GPIO"]) if os.environ.get("GAR_ENC_SW_GPIO") else None,
 }
 
 WIDTH, HEIGHT, FPS = 320, 240, 15
@@ -79,7 +80,7 @@ class VideoMonitor:
         self.display = display
         self.state = {
             "mode": "VIEW",       # VIEW | MENU | ADJUST
-            "source": "COLORBAR", # COLORBAR | RX
+            "source": os.environ.get("GAR_INITIAL_VIDEO_SOURCE", "COLORBAR"), # COLORBAR | RX
             "menu_index": 0,
             "brightness": 0.0,    # videobalance range: -1.0 .. 1.0
             "contrast": 1.0,      # videobalance range: 0.0 .. 2.0
