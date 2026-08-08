@@ -123,7 +123,7 @@ class VideoMonitor:
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if ok:
             try:
-                self.display.blit(0, 0, WIDTH, HEIGHT, bytes(mapinfo.data))
+                self.display.blit_native_rgb565(0, 0, WIDTH, HEIGHT, mapinfo.data)
             finally:
                 buf.unmap(mapinfo)
         return Gst.FlowReturn.OK
