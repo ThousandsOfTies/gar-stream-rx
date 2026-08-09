@@ -1,15 +1,17 @@
 """Video monitor: GStreamer does the heavy lifting (decode/colorbar/scale/
-brightness-contrast/OSD text), this script only does two things:
+brightness-contrast/OSD text), while this application coordinates:
 
   1. Builds the pipeline and pulls finished RGB565 frames from an appsink,
      pushing each one straight to the ILI9341 over SPI.
   2. Turns KY-040 rotate/press events into GStreamer property changes
      (active input pad, videobalance brightness/contrast, textoverlay text).
+  3. Discovers TX sources and requests the channel selected by the RX user.
 
 Requires PyGObject + the GStreamer 1.0 typelib on the board (system packages
 from Buildroot, not pip - see README.md "Buildroot packages needed").
 """
 import os
+import socket
 import sys
 
 import gi
@@ -19,6 +21,12 @@ from gi.repository import Gst, GLib  # noqa: E402
 
 from ili9341 import ILI9341  # noqa: E402
 from ky040 import KY040  # noqa: E402
+from source_browser import (  # noqa: E402
+    DEFAULT_DISCOVERY_PORT,
+    DEFAULT_STREAM_PORT,
+    SourceBrowser,
+    parse_discovery_peers,
+)
 
 CONFIG = {
     "spi_bus": 0,
@@ -29,6 +37,11 @@ CONFIG = {
     "enc_clk_gpio": int(os.environ["GAR_ENC_CLK_GPIO"]) if os.environ.get("GAR_ENC_CLK_GPIO") else None,
     "enc_dt_gpio": int(os.environ["GAR_ENC_DT_GPIO"]) if os.environ.get("GAR_ENC_DT_GPIO") else None,
     "enc_sw_gpio": int(os.environ["GAR_ENC_SW_GPIO"]) if os.environ.get("GAR_ENC_SW_GPIO") else None,
+    "receiver_id": os.environ.get("GAR_STREAM_RECEIVER_ID", f"{socket.gethostname()}-rx"),
+    "discovery_port": int(os.environ.get("GAR_STREAM_DISCOVERY_PORT", str(DEFAULT_DISCOVERY_PORT))),
+    "discovery_peers": os.environ.get("GAR_STREAM_DISCOVERY_PEERS", ""),
+    "stream_port": int(os.environ.get("GAR_STREAM_RX_PORT", str(DEFAULT_STREAM_PORT))),
+    "initial_source": os.environ.get("GAR_INITIAL_VIDEO_SOURCE", "AUTO"),
 }
 
 WIDTH, HEIGHT, FPS = 320, 240, 15
@@ -40,7 +53,7 @@ WIDTH, HEIGHT, FPS = 320, 240, 15
 # no hardware video decoder, and MJPEG's independent frames tolerate UDP packet
 # loss much better than an H.264 GOP would. See README "Codec choice" section.
 RX_PIPELINE_FRAGMENT = (
-    "udpsrc name=rx_source port=5600 "
+    f"udpsrc name=rx_source port={CONFIG['stream_port']} "
     'caps="application/x-rtp,media=video,encoding-name=JPEG,payload=26" '
     "! rtpjitterbuffer latency=100 "
     "! rtpjpegdepay ! jpegdec "
@@ -68,7 +81,7 @@ SINK_CHAIN = (
     "! appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
 )
 
-MENU_ITEMS = ["INPUT", "BRIGHTNESS", "CONTRAST", "EXIT"]
+MENU_ITEMS = ["SOURCE", "BRIGHTNESS", "CONTRAST", "EXIT"]
 
 
 def clamp(value, lo, hi):
@@ -78,9 +91,17 @@ def clamp(value, lo, hi):
 class VideoMonitor:
     def __init__(self, display):
         self.display = display
+        initial_source = CONFIG["initial_source"].strip()
+        self.auto_select = initial_source.upper() == "AUTO"
+        self.requested_initial_source = (
+            None if initial_source.upper() in ("AUTO", "COLORBAR") else initial_source
+        )
+        self.browser = None
+        self.sources = {}
+        self.source_choice_index = 0
         self.state = {
             "mode": "VIEW",       # VIEW | MENU | SUBMENU
-            "source": os.environ.get("GAR_INITIAL_VIDEO_SOURCE", "COLORBAR"), # COLORBAR | RX
+            "source": "COLORBAR",  # COLORBAR or a discovered source_id
             "menu_index": 0,
             "brightness": 0.0,    # videobalance range: -1.0 .. 1.0
             "contrast": 1.0,      # videobalance range: 0.0 .. 2.0
@@ -142,18 +163,72 @@ class VideoMonitor:
         pad = self.pad_colorbar if self.state["source"] == "COLORBAR" else self.pad_rx
         self.sel.set_property("active-pad", pad)
 
-    def toggle_source(self):
-        self.state["source"] = "RX" if self.state["source"] == "COLORBAR" else "COLORBAR"
+    def attach_browser(self, browser):
+        self.browser = browser
+
+    def _source_choices(self):
+        choices = [("COLORBAR", "COLORBAR")]
+        for source in self.sources.values():
+            suffix = "" if source.online else " [OFF]"
+            choices.append((source.source_id, f"{source.name}{suffix}"))
+        return choices
+
+    def _source_label(self, source_id=None):
+        source_id = self.state["source"] if source_id is None else source_id
+        if source_id == "COLORBAR":
+            return "COLORBAR"
+        source = self.sources.get(source_id)
+        if source is None:
+            return source_id
+        return source.name + ("" if source.online else " [OFF]")
+
+    def select_source(self, source_id):
+        if source_id != "COLORBAR" and source_id not in self.sources:
+            return False
+        if self.browser is not None:
+            requested_id = None if source_id == "COLORBAR" else source_id
+            if not self.browser.select_source(requested_id):
+                return False
+        self.state["source"] = source_id
+        self.auto_select = False
         self.apply_source()
+        print(f"[stream_rx] source: {self._source_label(source_id)}")
+        return True
+
+    def update_sources(self, sources):
+        self.sources = {source.source_id: source for source in sources}
+        choices = self._source_choices()
+        if choices:
+            self.source_choice_index %= len(choices)
+        if self.state["source"] == "COLORBAR":
+            candidate = None
+            if self.requested_initial_source is not None:
+                candidate = next(
+                    (
+                        source
+                        for source in sources
+                        if source.online
+                        and self.requested_initial_source in (source.source_id, source.name)
+                    ),
+                    None,
+                )
+            elif self.auto_select:
+                candidate = next((source for source in sources if source.online), None)
+            if candidate is not None:
+                self.select_source(candidate.source_id)
+                self.requested_initial_source = None
+        if self.state["mode"] != "VIEW":
+            self.update_osd_text()
+        return GLib.SOURCE_REMOVE
 
     def update_osd_text(self):
         item = MENU_ITEMS[self.state["menu_index"]]
         if self.state["mode"] == "SUBMENU":
-            if item == "INPUT":
-                lines = ["RX MENU > INPUT"]
-                for source in ("COLORBAR", "RX"):
-                    cursor = ">" if source == self.state["source"] else " "
-                    lines.append(f"{cursor} {source}")
+            if item == "SOURCE":
+                lines = ["RX MENU > SOURCE"]
+                for index, (_source_id, label) in enumerate(self._source_choices()):
+                    cursor = ">" if index == self.source_choice_index else " "
+                    lines.append(f"{cursor} {label}")
             elif item == "BRIGHTNESS":
                 lines = ["RX MENU > BRIGHTNESS", f"> BRIGHTNESS {self.state['brightness']:+.2f}"]
             else:
@@ -162,8 +237,8 @@ class VideoMonitor:
             lines = ["RX MENU"]
             for i, menu_item in enumerate(MENU_ITEMS):
                 cursor = ">" if i == self.state["menu_index"] else " "
-                if menu_item == "INPUT":
-                    value = self.state["source"]
+                if menu_item == "SOURCE":
+                    value = self._source_label()
                 elif menu_item == "BRIGHTNESS":
                     value = f"{self.state['brightness']:+.2f}"
                 elif menu_item == "CONTRAST":
@@ -174,19 +249,24 @@ class VideoMonitor:
         self.osd.set_property("text", "\n".join(lines))
 
     def on_rotate(self, direction, _counter):
+        step = 1 if direction >= 0 else -1
         mode = self.state["mode"]
         if mode == "MENU":
-            self.state["menu_index"] = (self.state["menu_index"] + direction) % len(MENU_ITEMS)
+            self.state["menu_index"] = (self.state["menu_index"] + step) % len(MENU_ITEMS)
             self.update_osd_text()
         elif mode == "SUBMENU":
             item = MENU_ITEMS[self.state["menu_index"]]
-            if item == "INPUT":
-                self.toggle_source()
+            if item == "SOURCE":
+                choices = self._source_choices()
+                if choices:
+                    self.source_choice_index = (
+                        self.source_choice_index + step
+                    ) % len(choices)
             elif item == "BRIGHTNESS":
-                self.state["brightness"] = clamp(self.state["brightness"] + direction * 0.05, -1.0, 1.0)
+                self.state["brightness"] = clamp(self.state["brightness"] + step * 0.05, -1.0, 1.0)
                 self.bal.set_property("brightness", self.state["brightness"])
             elif item == "CONTRAST":
-                self.state["contrast"] = clamp(self.state["contrast"] + direction * 0.05, 0.0, 2.0)
+                self.state["contrast"] = clamp(self.state["contrast"] + step * 0.05, 0.0, 2.0)
                 self.bal.set_property("contrast", self.state["contrast"])
             self.update_osd_text()
 
@@ -204,8 +284,19 @@ class VideoMonitor:
                 self.osd.set_property("silent", True)
             else:
                 self.state["mode"] = "SUBMENU"
+                if item == "SOURCE":
+                    choices = self._source_choices()
+                    current = self.state["source"]
+                    self.source_choice_index = next(
+                        (index for index, (source_id, _label) in enumerate(choices) if source_id == current),
+                        0,
+                    )
                 self.update_osd_text()
         elif mode == "SUBMENU":
+            if MENU_ITEMS[self.state["menu_index"]] == "SOURCE":
+                choices = self._source_choices()
+                if choices:
+                    self.select_source(choices[self.source_choice_index][0])
             self.state["mode"] = "MENU"
             self.update_osd_text()
 
@@ -236,6 +327,19 @@ def main():
 
     monitor = VideoMonitor(display)
 
+    query_targets = (("255.255.255.255", CONFIG["discovery_port"]),) + parse_discovery_peers(
+        CONFIG["discovery_peers"], CONFIG["discovery_port"]
+    )
+    browser = SourceBrowser(
+        CONFIG["receiver_id"],
+        discovery_port=CONFIG["discovery_port"],
+        stream_port=CONFIG["stream_port"],
+        query_targets=query_targets,
+        on_sources_changed=lambda sources: GLib.idle_add(monitor.update_sources, sources),
+    )
+    monitor.attach_browser(browser)
+    browser.start()
+
     encoder = KY040(
         CONFIG["enc_clk_gpio"], CONFIG["enc_dt_gpio"], CONFIG["enc_sw_gpio"],
         on_rotate=monitor.on_rotate, on_press=monitor.on_press,
@@ -250,6 +354,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        browser.stop()
         encoder.stop()
         monitor.stop()
         display.close()

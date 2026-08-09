@@ -1,9 +1,9 @@
 # Luckfox Lyra Plus (RK3506G2) — ビデオモニター (ILI9341 + KY-040)
 
 **目的:** 小さなビデオモニター装置を作ること。入力は **Raspberry Pi 5 (TX)** に
-接続した USB UVC カメラ (OV3660, 2048x1536/15fps, MJPEG) からネットワーク経由で
-送られてくる GStreamer のビデオストリーム (RX)。出力は ILI9341 で、内蔵のカラー
-バーテストパターンに切り替えることもできる。KY-040 で入力を順に切り替え、
+接続した USB UVC カメラ (OV3660, 2048x1536/15fps, MJPEG) をSourceとして自動検出し、
+RXから送信要求して受け取るGStreamerビデオストリーム。出力はILI9341で、内蔵のカラー
+バーテストパターンにも切り替えられる。KY-040で検出したSourceチャンネルを選択し、
 (プッシュで開く OSD メニュー経由で) 明るさ/コントラストを調整する。
 
 **ステータス:** 計画を改訂 (下の「アーキテクチャ」参照) — もともとは単純な
@@ -48,7 +48,8 @@ UDP 上にパケット化する。
 ```mermaid
 flowchart LR
     subgraph TX ["Raspberry Pi 5 (TX)"]
-        CAM["OV3660 USB UVC カメラ\nMJPEG 640x480@15fps"] --> PAY["rtpjpegpay"] --> UDP["udpsink :5600"]
+        CAM["OV3660 USB UVC カメラ\nMJPEG 640x480@15fps"] --> PAY["rtpjpegpay"] --> UDP["multiudpsink"]
+        CTRL["source advertiser\nUDP :5601"]
     end
     subgraph GStreamer pipeline
         A["videotestsrc\npattern=smpte\n(カラーバー)"] --> S["input-selector\n(active-pad)"]
@@ -64,6 +65,8 @@ flowchart LR
     PY -- "set_property()" --> S
     PY -- "set_property()" --> V
     PY -- "set_property()" --> O
+    CTRL -. "source_announce" .-> PY
+    PY -. "stream_request lease" .-> CTRL
 ```
 
 - `input-selector` は、カラーバーのテストソースとデコードされた RX 映像を
@@ -82,9 +85,10 @@ flowchart LR
 - `ili9341.py` — SPI で描画する ILI9341 ドライバ (元のデモから変更なし)。
 - `ky040.py` — KY-040 ロータリーエンコーダ + プッシュボタンの読み取り
   (変更なし)。
+- `source_browser.py` — TXの広告を収集し、Source一覧、送信要求、lease更新を管理する。
 - `video_monitor.py` — **新しいメインアプリ**: 上記の GStreamer パイプラインを
   構築し、`appsink` のフレームをディスプレイに送り、KY-040 のイベントを
-  INPUT/BRIGHTNESS/CONTRAST/EXIT の OSD メニューにマッピングする。
+  SOURCE/BRIGHTNESS/CONTRAST/EXIT の OSD メニューにマッピングする。
 - `demo.py` — 元のカウンターデモ。GStreamer を導入する前の、素の SPI +
   エンコーダ配線の動作確認用として残してある。
 
@@ -98,9 +102,8 @@ flowchart LR
    (RX 分岐をコメントアウト/無視するか、`input-selector` を常に `sink_0` に
    固定する)、ライブの RX ストリームなしで `videobalance` + `textoverlay` +
    `appsink` → SPI がエンドツーエンドで動くことを確認する。
-3. Raspberry Pi 5 側で **TX を立ち上げ** (下の「TX 側」節を参照)、
-   `video_monitor.py` の `RX_PIPELINE_FRAGMENT` (MJPEG/RTP/UDP、すでに記入済み)
-   と一致することを確認する — あとはホスト/ポートを合わせるだけ。
+3. Raspberry Pi 5 側で **TX を立ち上げ** (下の「TX 側」節を参照)。RXのSource
+   メニューにTX名が現れ、選択すると送信要求とRTP受信が始まることを確認する。
 4. **リアルタイム性のチューニング**: `luckfox-config` で SPI クロックを
    上げ (帯域幅の注記を参照)、Cortex-A7 が選んだ解像度/fps で MJPEG を
    リアルタイムにソフトウェアデコードできるか確認し、できなければ
@@ -186,43 +189,23 @@ CONFIG = {
 CPU デコード自体がボトルネックだと決めつける前に、`video_monitor.py` の
 (`WIDTH`, `HEIGHT`, `FPS`) で解像度/fps を下げてみること。
 
-## 4. TX 側 (Raspberry Pi 5 + OV3660 UVC カメラ)
+## 4. TX Sourceの検出と選択
 
-まずカメラが UVC 経由で実際にどのモードを公開しているか確認する — 安価な
-MJPEG カメラは、最大解像度だけでなくたいてい VGA モードもサポートしている:
+TXは`gar-stream/1`の`source_announce`をUDP 5601へ定期送信し、RXからの
+`source_query`にも応答する。RXは見つけたTXをSourceチャンネルとして保持する。
+`SOURCE`サブメニューでTXを確定すると、RXは自分のRTP受信port 5600を含む
+`stream_request`を送る。要求はlease方式で定期更新され、別SourceまたはCOLORBARへ
+切り替えると以前のTXへ`stream_stop`を送る。
 
-```bash
-v4l2-ctl --list-formats-ext -d /dev/video0
-```
-
-ILI9341 上の 320x240 はアスペクト比 4:3 で、このカメラのネイティブ解像度
-2048x1536 も同じく 4:3 — なのできれいに縮小できる 4:3 のキャプチャサイズ、
-例えば **640x480** (パネル解像度のちょうど2倍) を狙う。もし `640x480` の
-MJPEG がリストにあれば、TX パイプライン全体はこれだけで済む — 単なる
-再パッケージ化で、デコード/エンコードの CPU コストはゼロ:
+同一LANでは設定不要で、TXのhostnameがSource名になる。broadcastが届かないVLAN、
+VPN、cloud networkではRX側だけに次を設定し、既知TXへunicast queryを送る。
 
 ```bash
-gst-launch-1.0 -v v4l2src device=/dev/video0 \
-  ! image/jpeg,width=640,height=480,framerate=15/1 \
-  ! rtpjpegpay ! udpsink host=<lyra-ip> port=5600 sync=false
+GAR_STREAM_DISCOVERY_PEERS=10.0.0.20,tx.example:5601
 ```
 
-640x480 の MJPEG が提供されていない (最大解像度しかない) 場合は、代わりに
-デコード + スケール + 再エンコードを行う — Pi 5 のクアッド Cortex-A76 なら
-このサイズの JPEG 処理に十分な余力がある:
-
-```bash
-gst-launch-1.0 -v v4l2src device=/dev/video0 \
-  ! image/jpeg,width=2048,height=1536,framerate=15/1 \
-  ! jpegdec ! videoconvert ! videoscale \
-  ! video/x-raw,width=640,height=480 \
-  ! jpegenc quality=75 ! rtpjpegpay ! udpsink host=<lyra-ip> port=5600 sync=false
-```
-
-`<lyra-ip>` を Lyra Plus の実際の IP に置き換え、`video_monitor.py` の
-`RX_PIPELINE_FRAGMENT` にある `udpsrc port=5600` と一致していることを確認する。
-これが安定して動くようになったら、Pi 上で自動起動する `systemd` ユニットに
-するのも良い候補 — ただし最初の映像を出すだけならそこまでは不要。
+TXにはRX addressを設定しない。複数TXはSource一覧から切り替えられ、TXが一時的に
+消えた場合もRXはチャンネルを一定時間保持して`[OFF]`表示し、再広告時に再接続する。
 
 ## 5. `video_monitor.py` に必要な Buildroot パッケージ
 
@@ -268,8 +251,8 @@ GStreamer/PyGObject がイメージに入っていて、ピンの CONFIG を記�
 python3 video_monitor.py
 ```
 
-- ノブを押す: OSDメニュー (`INPUT` / `BRIGHTNESS` / `CONTRAST` / `EXIT`) を開く。
-  回して行を選び、押すとサブメニューに入る。`INPUT`は現在値にカーソルを置いた
+- ノブを押す: OSDメニュー (`SOURCE` / `BRIGHTNESS` / `CONTRAST` / `EXIT`) を開く。
+  回して行を選び、押すとサブメニューに入る。`SOURCE`は現在値にカーソルを置いた
   入力候補を表示する。`BRIGHTNESS`と`CONTRAST`は値を右側に表示し、回転で増減、
   押下で確定してメインメニューへ戻る。`EXIT`を選んで押すとメニューを閉じる。
 
@@ -291,8 +274,7 @@ python3 video_monitor.py
   ネットワーク帯域とデコードコストの両方にとって、その方が効果が大きい。
 - **`gi.repository.Gst` の import が失敗する**: PyGObject/gobject-introspection
   がまだイメージに入っていない — 上の Buildroot パッケージの節を参照。
-- **カラーバーは動くが RX の映像が出ない**: Pi 5 の `gst-launch-1.0`
-  プロセスが実際に動作していて、Lyra の現在の IP を指しているか
-  (DHCP のリースは変わる) 確認する。また、両者の間で UDP ポート 5600 が
-  ブロックされていないか確認する (同一サブネットが最も簡単 — VLAN/NAT を
-  またいだ MJPEG/RTP のルーティングはそれ自体が面倒の種になる)。
+- **TXがSource一覧に出ない**: TXが起動しているか、UDP 5601が双方向に通るか確認する。
+  broadcastが届かないnetworkではRX側の`GAR_STREAM_DISCOVERY_PEERS`へTX addressを追加する。
+- **TXを選べるが映像が出ない**: TXログのreceiver一覧にこのRXが追加されているか、
+  TXからRXへのUDP 5600が通るか確認する。
