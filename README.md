@@ -6,12 +6,12 @@ RXから送信要求して受け取るGStreamerビデオストリーム。出力
 バーテストパターンにも切り替えられる。KY-040で検出したSourceチャンネルを選択し、
 (プッシュで開く OSD メニュー経由で) 明るさ/コントラストを調整する。
 
-**ステータス:** 計画を改訂 (下の「アーキテクチャ」参照) — もともとは単純な
-SPI 駆動のカウンターデモだったが、「ビデオ RX + カラーバー + OSD メニュー」が
-スコープに入ったところで方向転換し、その後 TX 側 (Raspberry Pi 5 + 今回の特定の
-カメラ) が判明した時点でコーデックを確定させた。そのフェーズの
-`demo.py`/`ili9341.py`/`ky040.py` は今も残っており、配線の動作確認用として
-引き続き有用。`video_monitor.py` が新しいメインアプリ。
+**ステータス:** `native/` のC++アプリを正式な実装とし、EC2 Graviton上で
+Source検出・lease要求・RTP/JPEGデコード・ILI9341表示・KY-040メニュー操作まで
+確認済み。アプリはシミュレーション専用HALを持たず、Linux標準の
+`/dev/gpiochip*`、`/dev/spidev*`、UDP socketだけを使用する。EC2向けはaarch64、
+Lyra向けはarmv7lとCPU ABIが異なるためバイナリは別ビルドになるが、ソースと
+実行ロジックは共通である。Python版は初期PoCと配線診断の参考として残している。
 
 ## コーデックの選択: RTP/UDP 上の MJPEG
 
@@ -38,12 +38,9 @@ UDP 上にパケット化する。
 
 ## アーキテクチャ
 
-ビデオのデコード/スケーリング/合成を Python で自前実装するのではなく
-(ハードウェアビデオデコーダのない Cortex-A7 ではあまりに遅すぎる)、この計画は
-**GStreamer** に画素処理を最適化された C コードで任せ、Python 側は2つの
-軽い役割に留める: KY-040 のイベントを GStreamer エレメントのプロパティに
-配線することと、`appsink` から出来上がったフレームを SPI 経由で ILI9341 に
-コピーすること。
+ビデオのデコード/スケーリング/合成は **GStreamer** に任せ、ネイティブC++アプリが
+KY-040、Source管理、GStreamerプロパティ、`appsink`、ILI9341 SPI転送をまとめて
+制御する。PyGObjectやpython-peripheryは本番実行時に不要である。
 
 ```mermaid
 flowchart LR
@@ -59,18 +56,18 @@ flowchart LR
         O --> C["videoconvert\n-> RGB16"]
         C --> AS["appsink"]
     end
-    AS -- "raw RGB565 frame" --> PY["video_monitor.py"]
-    PY -- "SPI blit()" --> ILI["ILI9341"]
-    KY["KY-040\n(periphery GPIO)"] -- "rotate/press" --> PY
-    PY -- "set_property()" --> S
-    PY -- "set_property()" --> V
-    PY -- "set_property()" --> O
-    CTRL -. "source_announce" .-> PY
-    PY -. "stream_request lease" .-> CTRL
+    AS -- "raw RGB565 frame" --> APP["gar-stream-rx native"]
+    APP -- "/dev/spidev0.0" --> ILI["ILI9341"]
+    KY["KY-040\nGPIO chardev v2"] -- "rotate/press" --> APP
+    APP -- "set_property()" --> S
+    APP -- "set_property()" --> V
+    APP -- "set_property()" --> O
+    CTRL -. "source_announce" .-> APP
+    APP -. "stream_request lease" .-> CTRL
 ```
 
 - `input-selector` は、カラーバーのテストソースとデコードされた RX 映像を
-  Python 側での画素処理ゼロで切り替える。
+  アプリ側での画素処理ゼロで切り替える。
 - `videobalance` はパイプライン自体の中で明るさ/コントラストを処理する
   (プロパティ: `brightness` -1.0〜1.0, `contrast` 0.0〜2.0) — ノブはこれらを
   微調整するだけ。
@@ -82,98 +79,77 @@ flowchart LR
   参照)、常に最新のフレーム・最低遅延を保つ。
 
 ファイル構成:
-- `ili9341.py` — SPI で描画する ILI9341 ドライバ (元のデモから変更なし)。
-- `ky040.py` — KY-040 ロータリーエンコーダ + プッシュボタンの読み取り
-  (変更なし)。
-- `source_browser.py` — TXの広告を収集し、Source一覧、送信要求、lease更新を管理する。
-- `video_monitor.py` — **新しいメインアプリ**: 上記の GStreamer パイプラインを
-  構築し、`appsink` のフレームをディスプレイに送り、KY-040 のイベントを
-  SOURCE/BRIGHTNESS/CONTRAST/EXIT の OSD メニューにマッピングする。
-- `demo.py` — 元のカウンターデモ。GStreamer を導入する前の、素の SPI +
-  エンコーダ配線の動作確認用として残してある。
+
+- `native/` — 正式なC++17実装。UI state、PnP、GPIO chardev v2、SPI、GStreamerを含む。
+- `native/tests/` — メニューstate、`gar-stream/1`、UDP discovery/leaseのテスト。
+- `video_monitor.py` / `source_browser.py` — 仕様比較用の初期Python PoC。
+- `demo.py` / `ili9341.py` / `ky040.py` — 配線単体診断用の初期PoC。
 
 ## 段階的な展開
 
-1. **配線の動作確認 (完了)** — `demo.py` で SPI/GPIO の配線と
-   `luckfox-config` のピン割り当てがそもそも機能するかを確認する。まだ
-   GStreamer は不要。
-2. **Buildroot イメージに GStreamer を追加** — 未完了。SDK の再ビルドが必要
-   (下記参照)。まずは **カラーバー分岐だけ**で `video_monitor.py` を動かし
-   (RX 分岐をコメントアウト/無視するか、`input-selector` を常に `sink_0` に
-   固定する)、ライブの RX ストリームなしで `videobalance` + `textoverlay` +
-   `appsink` → SPI がエンドツーエンドで動くことを確認する。
-3. Raspberry Pi 5 側で **TX を立ち上げ** (下の「TX 側」節を参照)。RXのSource
-   メニューにTX名が現れ、選択すると送信要求とRTP受信が始まることを確認する。
-4. **リアルタイム性のチューニング**: `luckfox-config` で SPI クロックを
-   上げ (帯域幅の注記を参照)、Cortex-A7 が選んだ解像度/fps で MJPEG を
+1. **EC2シミュレーション (完了)** — aarch64 native binaryを実機と同じLinux
+   device I/Fで実行し、PnP・RTP/JPEG・表示・メニューを確認する。
+2. **Lyra SDK統合 (build/deploy実装済み)** — 同じ`native/`をRK3506 Buildroot
+   toolchainでarmv7l向けにビルドする。必要なGStreamer runtimeと、stock kernelで
+   省略されているSPI moduleはartifactへ同梱するため、実機rootfsの更新は不要。
+3. **配線と実機起動** — 下記のLyra Plus標準配線と`/etc/gar/gar-stream-rx.env`を使い、
+   同じ実行ファイル構成をBusyBox initから起動する。
+4. **リアルタイム性のチューニング**: artifact側のSPI上限と
+   `GAR_SPI_MAX_HZ`を合わせ、Cortex-A7 が選んだ解像度/fps で MJPEG を
    リアルタイムにソフトウェアデコードできるか確認し、できなければ
    解像度/fps を下げる。
 
 ## 1. 配線する
 
-Lyra Plus はデフォルトで SPI/GPIO ピンが固定で出ているわけではない —
-`RM_IOx` ピンは **`luckfox-config`** ツールで各種周辺機能にマルチプレクスされる
-(SPI/GPIO の変更に再起動は不要)。ボードのシリアル/SSH コンソールで:
+実機imageには`luckfox-config`がない場合があるため、artifactの`configure-target`が
+現在のboot DTBへSPI0/spidevノードだけを追加し、起動時に`iomux`で次のRM_IOを設定する。
+これはLuckfox公式のSPI0例 (`RM_IO7/6/5`) にCS用`RM_IO4`を加えた配置で、GPIO制御線も
+すべて`/dev/gpiochip0`内に収まる。
 
-```bash
-luckfox-config
-```
+| 用途 | Lyra Plus | GPIO offset | 物理pin |
+|---|---:|---:|---:|
+| 3.3V電源 | 3V3_OUT | — | 10 |
+| GND | GND | — | 25または35 |
+| SPI0 CLK | RM_IO7 | 7 | 27 |
+| SPI0 MOSI | RM_IO6 | 6 | 29 |
+| SPI0 MISO | RM_IO5 | 5 | 31 |
+| SPI0 CS0 | RM_IO4 | 4 | 33 |
+| ILI9341 DC | RM_IO3 | 3 | 37 |
+| ILI9341 RESET | RM_IO2 | 2 | 39 |
+| KY-040 CLK | RM_IO8 | 8 | 23 |
+| KY-040 DT | RM_IO9 | 9 | 21 |
+| KY-040 SW | RM_IO10 | 10 | 19 |
 
-1. **Advanced Options → SPI → SPI0 → enable** としてから、以下を割り当てる:
-   - CLK → `RMIO24`
-   - MOSI → `RMIO25`
-   - MISO → `RMIO26` (ILI9341 では使わないが、マルチプレクサ上は1本必要)
-   - CS → `RMIO27`
+公式pinout図で各RM_IOの横に表示される「3.3V」はGPIOの信号電圧であり、電源出力ではない。
+電源として使える3.3Vは右列の**物理pin 10 (`3V3_OUT`)**。基板のUSB-C側を上、RJ45側を
+下に置いたとき、奇数pinは左、偶数pinは右に並ぶ。
 
-   これは Luckfox 公式のドキュメントに載っているマッピング例で、Lyra Plus の
-   ピン配置図のヘッダーピン 41/42/43/50 と対応している。保存後に以下で確認:
-
-   ```bash
-   luckfox-config show
-   ls /sys/bus/spi/devices/          # spi0.0 が表示されるはず
-   ```
-
-2. ディスプレイの **DC** (data/command) と **RST** (reset) 用に、あと2本の
-   `RM_IO` ピンを素の GPIO として残しておく — 例えば `RMIO28` と `RMIO29`。
-   `luckfox-config` で周辺機能に割り当てられていないピンは、
-   `luckfox-config show` 上でただの GPIO として表示される。
-
-3. KY-040 用に、さらに3本の `RM_IO` ピンを素の GPIO として残す:
-   **CLK**、**DT**、**SW** — 例えば `RMIO2`、`RMIO3`、`RMIO4`。
-
-4. `luckfox-config show` を実行し、DC/RST/CLK/DT/SW ピンに対して表示される
-   **sysfs GPIO 番号** (`gpio41`、`gpio64` のようなもの) を控えておく。
-   ボード/dtb の組み合わせによって変わるので、他人のボードの番号を
-   ハードコードせず、必ず自分の `luckfox-config show` の出力から読み取ること。
-
-5. 配線:
-   - ILI9341: `VCC`→3.3V、`GND`→GND、`CS`→手順1の CS ピン、`RESET`→RST GPIO、
-     `DC`(別名 `A0`/`RS`)→DC GPIO、`SDI(MOSI)`→MOSI、`SCK`→CLK、`LED`→3.3V
+配線:
+   - ILI9341: `VCC`→pin 10 (`3V3_OUT`)、`GND`→pin 25または35、`CS`→pin 33、
+     `RESET`→pin 39、`DC`(別名 `A0`/`RS`)→pin 37、`SDI(MOSI)`→pin 29、
+     `SCK`→pin 27、`LED`→pin 10 (`3V3_OUT`)
      (後でバックライト制御をしたい場合は 3.3V 耐圧の余っている PWM ピンでも可)、
-     `SDO(MISO)`→MISO (任意。ディスプレイ ID を読みたい場合のみ必要)。
-   - KY-040: `+`→3.3V、`GND`→GND、`CLK`/`DT`/`SW`→手順3の3本の GPIO。
+     `SDO(MISO)`→pin 31 (任意。ディスプレイ ID を読みたい場合のみ必要)。
+   - KY-040: `+`→pin 10 (`3V3_OUT`)、`GND`→pin 25または35、`CLK`→pin 23、
+     `DT`→pin 21、`SW`→pin 19。
    - KY-040 のボードは `CLK`/`DT`/`SW` にプルアップが付いていないことが多い。
      エンコーダの読み取りがガタつく/ステップを飛ばす場合は、この3本の線を
-     3.3V に 10kΩ でプルアップする (このボードの `periphery` sysfs GPIO API
-     はピンごとのバイアス設定を公開していないため、ソフトウェアプルアップは
-     ここでは使えない)。
+     3.3V に 10kΩ でプルアップする (現行native driverはGPIO biasを要求せず、
+     実機・シミュレータ共通のline/event操作だけを行う)。
 
-## 2. ピン番号を記入する
+## 2. ピン番号を設定する
 
-`luckfox-config show` で読み取った GPIO 番号を、`demo.py` **と**
-`video_monitor.py` の先頭にある `CONFIG` ブロックに記入する。例:
+正式アプリではソースを書き換えず、`/etc/gar/gar-stream-rx.env`へ記入する。例:
 
-```python
-CONFIG = {
-    "spi_bus": 0,
-    "spi_device": 0,
-    "spi_max_hz": 24_000_000,  # 下の帯域幅の注記を参照 - デフォルトの10MHzはビデオには遅すぎる
-    "dc_gpio": 64,
-    "rst_gpio": 65,
-    "enc_clk_gpio": 96,
-    "enc_dt_gpio": 97,
-    "enc_sw_gpio": 98,
-}
+```dotenv
+GAR_GPIO_CHIP=/dev/gpiochip0
+GAR_SPI_DEVICE=/dev/spidev0.0
+GAR_SPI_MAX_HZ=24000000
+GAR_LCD_DC_GPIO=3
+GAR_LCD_RST_GPIO=2
+GAR_ENC_CLK_GPIO=8
+GAR_ENC_DT_GPIO=9
+GAR_ENC_SW_GPIO=10
 ```
 
 ## 3. SPI 帯域幅に関する注記 (ビデオ経路にとって重要)
@@ -181,13 +157,12 @@ CONFIG = {
 320x240 の RGB565 フレームは `320*240*2 = 153,600 バイト`。Lyra のドキュメント
 上のデフォルト `spi-max-frequency` である 10MHz では、SPI バスだけで
 `10,000,000/8/153,600 ≈ 8fps` が上限になる — コマンドのオーバーヘッドを
-考慮する前の話。15fps の目標を達成するには、`luckfox-config`
-(Advanced Options → SPI → set speed) で SPI クロックを 24〜32MHz 程度まで上げ、
-`spi_max_hz` をそれに合わせる。この速度では短くまっすぐなジャンパー線が
+考慮する前の話。artifactのDTB overlayは24MHzを上限にしているため、まず
+`GAR_SPI_MAX_HZ=24000000`で確認する。この速度では短くまっすぐなジャンパー線が
 かなり効くので、ブレッドボードの長いリード線を使う場合はクロックを
 下げる必要があるかもしれない。それでもフレームが追いつかない場合は、
-CPU デコード自体がボトルネックだと決めつける前に、`video_monitor.py` の
-(`WIDTH`, `HEIGHT`, `FPS`) で解像度/fps を下げてみること。
+CPU デコード自体がボトルネックだと決めつける前に、native pipelineの
+解像度/fpsを下げてみること。
 
 ## 4. TX Sourceの検出と選択
 
@@ -207,9 +182,9 @@ GAR_STREAM_DISCOVERY_PEERS=10.0.0.20,tx.example:5601
 TXにはRX addressを設定しない。複数TXはSource一覧から切り替えられ、TXが一時的に
 消えた場合もRXはチャンネルを一定時間保持して`[OFF]`表示し、再広告時に再接続する。
 
-## 5. `video_monitor.py` に必要な Buildroot パッケージ
+## 5. nativeアプリに必要な Buildroot パッケージ
 
-GStreamer と PyGObject はデフォルトの Lyra イメージには含まれていない —
+GStreamer開発/runtimeはデフォルトの Lyra イメージには含まれていない —
 Luckfox Lyra の Buildroot SDK で有効化する必要がある (SDK のチェックアウト内で
 `make menuconfig` を実行し、リビルドして書き込む)。MJPEG のおかげで、
 H.264 経路よりもこのリストは軽く済む (`gst1-libav`/ffmpeg は不要):
@@ -221,35 +196,46 @@ H.264 経路よりもこのリストは軽く済む (`gst1-libav`/ffmpeg は不�
 - `BR2_PACKAGE_GST1_PLUGINS_GOOD` (`videobalance`, `udpsrc`, `rtpjpegdepay`、
   および "jpeg" プラグインの `jpegdec`/`jpegenc` — 依存関係として
   `libjpeg-turbo` を引き込むが、これは Buildroot が自動的に処理する)
-- `BR2_PACKAGE_PYTHON3`、`BR2_PACKAGE_PYTHON_PYGOBJECT`、
-  `BR2_PACKAGE_GOBJECT_INTROSPECTION` (Python から `gi.repository.Gst` を
-  使うために必要)
 
-**既知のリスク:** Buildroot で `gobject-introspection` をクロスコンパイルする
-のは既知の難所 (スキャンの段階でターゲットバイナリを実行する必要があるため、
-Buildroot の QEMU ベースのイントロスペクションサポートに依存する)。もし
-これが安定してビルドできないほど厄介だと分かった場合の **プラン B** は、
-PyGObject を完全に捨てて、`video_monitor.py` のパイプライン制御を
-libgstreamer-1.0 に対する小さな C プログラムとして再実装すること (C API には
-イントロスペクションは不要) — パイプライン文字列とプロパティ名はそのままで、
-グルー言語だけが変わる。
+Python、PyGObject、gobject-introspectionは不要。クロスビルドには上記target
+libraryを含むBuildroot SDK/sysrootを使う。
 
 ## 6. 実行する
 
-フォルダをボードにコピーする (`scp -r gar-stream-rx root@<board-ip>:/root/`)。
-
-まず配線/SPI の動作確認 (GStreamer は不要):
+EC2シミュレータでは親workspaceから次を実行する:
 
 ```bash
-python3 demo.py
+gar sim app build --workspace Local/GarStreamRx
+gar sim app deploy --workspace Local/GarStreamRx
+gar sim runtime start --workspace Local/GarStreamRx
 ```
 
-GStreamer/PyGObject がイメージに入っていて、ピンの CONFIG を記入したら、
-本番のビデオモニターを実行する:
+native source単体のhostテストは次で実行できる:
 
 ```bash
-python3 video_monitor.py
+cmake -S native -B native/build -DGAR_RX_BUILD_APP=OFF
+cmake --build native/build
+ctest --test-dir native/build --output-on-failure
 ```
+
+LyraではRK3506 Buildroot SDKで生成した`gar-stream-rx`を配置し、上記envを読ませて
+BusyBox initから起動する。親workspaceで以下を実行する:
+
+```bash
+cp config/rk3506-sdk.env.example config/rk3506-sdk.env
+cp config/gar-stream-rx.target.env.example config/gar-stream-rx.target.env
+# SDK pathを設定。GPIO値はexampleの標準配線を使用
+# WSLにはkernel module host tool用のgcc/flex/bison/m4が必要
+gar target build --workspace Local/GarStreamRx
+gar target prepare --workspace Local/GarStreamRx  # 初回またはrecipe更新時
+gar target deploy --workspace Local/GarStreamRx
+# 初回deployがreboot requiredと表示した場合
+ssh luckfox-lyra reboot
+```
+
+aarch64版をarmv7l実機へコピーする経路はなく、target buildは32-bit ARM ELFを検査する。
+stock 6.1.84 imageにない`spi-rockchip.ko`/`spidev.ko`も同じrelease/vermagicでbuildし、
+起動時に`/dev/spidev0.0`がない場合だけloadする。OS/rootfs全体の書き込みは行わない。
 
 - ノブを押す: OSDメニュー (`SOURCE` / `BRIGHTNESS` / `CONTRAST` / `EXIT`) を開く。
   回して行を選び、押すとサブメニューに入る。`SOURCE`は現在値にカーソルを置いた
@@ -258,22 +244,28 @@ python3 video_monitor.py
 
 ## トラブルシューティング
 
-- **色が入れ替わって見える (赤/青)**: `ILI9341(...)` の呼び出しで
-  `bgr=False` を設定する。
-- **映像が反転/回転がおかしい**: 同じ呼び出しの `rotation=` (0〜3) を変更する。
-- **何も描画されない / `/dev/spidev0.0` で `PermissionError`**: root で実行するか、
-  デバイスが実際に存在するか確認する (`ls /dev/spidev*`) — `luckfox-config`
-  で SPI0 を有効化した後にのみ現れる。
-- **エンコーダがステップを飛ばす、または二重カウントする**: 上述の 10kΩ
-  プルアップを追加するか、逆の問題 (速い回転を取りこぼす) であれば
-  `ky040.py` の `bounce_ms` を下げる。
+- **色が入れ替わって見える (赤/青)**: ILI9341のMADCTL BGR bitとpanel仕様を確認する。
+- **映像が反転/回転がおかしい**: ILI9341のMADCTL rotation設定を確認する。
+- **何も描画されない / `/dev/spidev0.0` がない**: 初回deploy後に実機を再起動したか、
+  `lsmod | grep -E 'spi_rockchip|spidev'`、`ls /dev/spidev*`、
+  `iomux 0 4`〜`iomux 0 7`を確認する。`uname -r`が
+  `RK3506_TARGET_KERNEL_RELEASE`と異なる場合はSDK設定を合わせて再buildする。
+- **エンコーダがステップを飛ばす、または二重カウントする**: native実装は
+  CLK/DT両相のGray-code遷移を一周分積算し、KY-040が待機位置へ戻った時だけ
+  1デテントを通知する。まず上述の配線と10kΩプルアップを確認し、ログの
+  `[input] KY-040 rotate direction=...`が物理クリック数と一致するか確認する。
+- **エンコーダ入力の到達確認**: `tail -f /var/log/gar/gar-stream-rx.log`を実行し、
+  回転時の`[input] KY-040 rotate direction=...`と押下時の`[input] KY-040 press`を確認する。
+  カーネルログは`dmesg`または`/var/log/messages`であり、ユーザー空間の入力イベントは
+  そこには記録されない。
 - **映像がカクつく/遅延する**: まず上の SPI 帯域幅の注記を確認する。
   SPI クロックがすでに上限に達している場合は、より高い解像度では JPEG
   デコード自体がボトルネックになっている可能性がある — フレームレートより
   先に TX 側のキャプチャサイズを下げる (例: 640x480 → 320x240) こと。
   ネットワーク帯域とデコードコストの両方にとって、その方が効果が大きい。
-- **`gi.repository.Gst` の import が失敗する**: PyGObject/gobject-introspection
-  がまだイメージに入っていない — 上の Buildroot パッケージの節を参照。
+- **GStreamer elementが見つからない**: deploy済みdirectoryの
+  `lib/gstreamer-1.0`と`runtime-libraries.txt`を確認する。実機rootfsへのGStreamer
+  インストールは不要。
 - **TXがSource一覧に出ない**: TXが起動しているか、UDP 5601が双方向に通るか確認する。
   broadcastが届かないnetworkではRX側の`GAR_STREAM_DISCOVERY_PEERS`へTX addressを追加する。
 - **TXを選べるが映像が出ない**: TXログのreceiver一覧にこのRXが追加されているか、
