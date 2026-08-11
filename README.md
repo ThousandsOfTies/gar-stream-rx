@@ -228,10 +228,15 @@ cp config/gar-stream-rx.target.env.example config/gar-stream-rx.target.env
 # WSLにはkernel module host tool用のgcc/flex/bison/m4が必要
 gar target build --workspace Local/GarStreamRx
 gar target prepare --workspace Local/GarStreamRx  # 初回またはrecipe更新時
+gar target configure --workspace Local/GarStreamRx --app gar-stream-rx --file config/gar-stream-rx.target.env
 gar target deploy --workspace Local/GarStreamRx
 # 初回deployがreboot requiredと表示した場合
 ssh luckfox-lyra reboot
 ```
+
+`gar target configure`は親workspaceのtarget設定を反映する手順である。通常の
+`gar target build`と`gar target deploy`は、実機の
+`/etc/gar/gar-stream-rx.env`を書き込んだり削除したりしない。
 
 aarch64版をarmv7l実機へコピーする経路はなく、target buildは32-bit ARM ELFを検査する。
 stock 6.1.84 imageにない`spi-rockchip.ko`/`spidev.ko`も同じrelease/vermagicでbuildし、
