@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Turn the KY-040 -> background hue + big counter change on the ILI9341.
 Press the KY-040 -> counter resets to 0 and the screen flashes white.
 

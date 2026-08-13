@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Minimal ILI9341 SPI driver for Linux (spidev + periphery GPIO).
 
 No framebuffer/fbtft kernel driver needed - this talks to the panel directly

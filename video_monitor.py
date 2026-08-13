@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Video monitor: GStreamer does the heavy lifting (decode/colorbar/scale/
 brightness-contrast/OSD text), while this application coordinates:
 

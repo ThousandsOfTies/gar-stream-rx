@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """KY-040 rotary encoder + push-button reader using periphery.GPIO edge events.
 
 Uses the same simple "CLK changed, compare against DT" quadrature approach as
