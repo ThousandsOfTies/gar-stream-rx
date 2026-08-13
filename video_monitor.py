@@ -17,11 +17,11 @@ import sys
 import gi
 
 gi.require_version("Gst", "1.0")
-from gi.repository import Gst, GLib  # noqa: E402
+from gi.repository import GLib, Gst
 
-from ili9341 import ILI9341  # noqa: E402
-from ky040 import KY040  # noqa: E402
-from source_browser import (  # noqa: E402
+from ili9341 import ILI9341
+from ky040 import KY040
+from source_browser import (
     DEFAULT_DISCOVERY_PORT,
     DEFAULT_STREAM_PORT,
     SourceBrowser,
@@ -107,7 +107,7 @@ class VideoMonitor:
             "contrast": 1.0,      # videobalance range: 0.0 .. 2.0
         }
 
-        pipeline_str = " ".join([COLORBAR_PIPELINE_FRAGMENT, RX_PIPELINE_FRAGMENT, SINK_CHAIN])
+        pipeline_str = f"{COLORBAR_PIPELINE_FRAGMENT} {RX_PIPELINE_FRAGMENT} {SINK_CHAIN}"
         self.pipeline = Gst.parse_launch(pipeline_str)
 
         self.sel = self.pipeline.get_by_name("sel")
@@ -313,8 +313,8 @@ def main():
                if CONFIG[k] is None]
     if missing:
         raise SystemExit(
-            "Fill in CONFIG%s in video_monitor.py first - run `luckfox-config show` "
-            "on the board to find these GPIO numbers (see README.md)." % missing
+            f"Fill in CONFIG{missing} in video_monitor.py first - run `luckfox-config show` "
+            "on the board to find these GPIO numbers (see README.md)."
         )
 
     Gst.init(None)

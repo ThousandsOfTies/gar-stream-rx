@@ -74,8 +74,8 @@ def main():
                if CONFIG[k] is None]
     if missing:
         raise SystemExit(
-            "Fill in CONFIG%s in demo.py first - run `luckfox-config show` on the "
-            "board to find these GPIO numbers (see README.md)." % missing
+            f"Fill in CONFIG{missing} in demo.py first - run `luckfox-config show` on the "
+            "board to find these GPIO numbers (see README.md)."
         )
 
     display = ILI9341(
