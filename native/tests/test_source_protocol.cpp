@@ -35,9 +35,21 @@ int main() {
     assert(decoded->control_port == 6201);
     assert(!decode_source_announcement("{}", 5601).has_value());
 
+    auto invalid_announcement = announcement;
+    invalid_announcement.replace(invalid_announcement.find("Kitchen TX"), 10, std::string("Kitchen ") + '\xff');
+    assert(!decode_source_announcement(invalid_announcement, 5601).has_value());
+
     const auto query = encode_source_query("rx-one");
     assert(query.find("\"type\":\"source_query\"") != std::string::npos);
     const auto request = encode_stream_request("tx-one", "rx-one", 5600, 7.0);
     assert(request.find("\"type\":\"stream_request\"") != std::string::npos);
     assert(request.find("\"stream_port\":5600") != std::string::npos);
+
+    rejected = false;
+    try {
+        static_cast<void>(encode_source_query(std::string("rx-") + '\xff'));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    assert(rejected);
 }

@@ -56,6 +56,9 @@ SourceBrowser::SourceBrowser(
       stream_port_(stream_port),
       query_targets_(std::move(query_targets)),
       on_sources_changed_(std::move(on_sources_changed)) {
+    // Fail during construction, rather than terminating the worker thread on
+    // its first query, when a runtime-provided receiver identity is invalid.
+    static_cast<void>(encode_source_query(receiver_id_));
     socket_fd_ = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (socket_fd_ < 0) {
         throw std::runtime_error("cannot create discovery socket: " + std::string(std::strerror(errno)));

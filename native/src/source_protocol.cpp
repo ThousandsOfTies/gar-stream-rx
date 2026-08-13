@@ -21,7 +21,8 @@ std::string trim(std::string_view value) {
 
 bool safe_identifier(std::string_view value) {
     return !value.empty() && value.size() <= 96 && std::all_of(value.begin(), value.end(), [](char character) {
-        return static_cast<unsigned char>(character) >= 32;
+        const auto byte = static_cast<unsigned char>(character);
+        return byte >= 0x20U && byte <= 0x7eU;
     });
 }
 
@@ -102,7 +103,7 @@ std::optional<int> json_integer(std::string_view payload, std::string_view key) 
 
 std::string json_escape(std::string_view value) {
     if (!safe_identifier(value)) {
-        throw std::invalid_argument("identifier must be printable, non-empty, and at most 96 bytes");
+        throw std::invalid_argument("identifier must be printable ASCII, non-empty, and at most 96 bytes");
     }
     std::string output;
     output.reserve(value.size());

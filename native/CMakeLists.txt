@@ -13,6 +13,7 @@ add_library(gar_stream_rx_core STATIC
     src/linux_gpio.cpp
     src/source_browser.cpp
     src/source_protocol.cpp
+    src/telemetry.cpp
 )
 target_include_directories(gar_stream_rx_core PUBLIC include)
 target_compile_options(gar_stream_rx_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -57,4 +58,9 @@ if(BUILD_TESTING)
     target_link_libraries(test_source_browser PRIVATE gar_stream_rx_core)
     target_compile_options(test_source_browser PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME source_browser COMMAND test_source_browser)
+
+    add_executable(test_telemetry tests/test_telemetry.cpp)
+    target_link_libraries(test_telemetry PRIVATE gar_stream_rx_core)
+    target_compile_options(test_telemetry PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME telemetry COMMAND test_telemetry)
 endif()
