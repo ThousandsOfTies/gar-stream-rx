@@ -48,7 +48,7 @@ int main() {
 
     const auto lines = state.menu_lines();
     assert(lines.size() == 5);
-    assert(lines.front() == "RX MENU");
+    assert(lines.front() == "RX SETTINGS");
     assert(lines[3].find("CONTRAST") != std::string::npos);
 
     state.rotate(1);

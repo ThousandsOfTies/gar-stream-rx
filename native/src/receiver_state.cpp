@@ -197,7 +197,7 @@ std::vector<std::string> ReceiverState::menu_lines() const {
 
     if (mode_ == UiMode::submenu) {
         const auto item = menu_item();
-        std::vector<std::string> lines{"RX MENU > " + menu_item_name(item)};
+        std::vector<std::string> lines{"RX > " + menu_item_name(item)};
         if (item == MenuItem::source) {
             const auto choices = source_choices();
             for (std::size_t index = 0; index < choices.size(); ++index) {
@@ -206,14 +206,14 @@ std::vector<std::string> ReceiverState::menu_lines() const {
                 );
             }
         } else if (item == MenuItem::brightness) {
-            lines.push_back("> BRIGHTNESS " + fixed_value(brightness_, true));
+            lines.push_back("> " + fixed_value(brightness_, true));
         } else if (item == MenuItem::contrast) {
-            lines.push_back("> CONTRAST   " + fixed_value(contrast_, false));
+            lines.push_back("> " + fixed_value(contrast_, false));
         }
         return lines;
     }
 
-    std::vector<std::string> lines{"RX MENU"};
+    std::vector<std::string> lines{"RX SETTINGS"};
     for (std::size_t index = 0; index < kMenuItems.size(); ++index) {
         const auto item = kMenuItems[index];
         std::string value;

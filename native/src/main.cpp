@@ -67,7 +67,9 @@ std::string pipeline_description(std::uint16_t stream_port) {
         "input-selector name=sel "
         "! videobalance name=bal brightness=0.0 contrast=1.0 "
         "! textoverlay name=osd text=\"\" silent=true shaded-background=true "
-        "valignment=top halignment=left font-desc=\"Sans 14\" "
+        "valignment=top halignment=left font-desc=\"Sans Bold 16\" "
+        "color=4294967295 draw-outline=true draw-shadow=false outline-color=4278190080 "
+        "shading-value=180 xpad=8 ypad=6 "
         "! videoconvert ! video/x-raw,format=RGB16,width=320,height=240 "
         "! appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true";
 }
