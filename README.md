@@ -108,30 +108,30 @@ flowchart LR
 
 | 用途 | Lyra Plus | GPIO offset | 物理pin |
 |---|---:|---:|---:|
-| 3.3V電源 | 3V3_OUT | — | 10 |
-| GND | GND | — | 25または35 |
-| SPI0 CLK | RM_IO7 | 7 | 27 |
-| SPI0 MOSI | RM_IO6 | 6 | 29 |
-| SPI0 MISO | RM_IO5 | 5 | 31 |
-| SPI0 CS0 | RM_IO4 | 4 | 33 |
-| ILI9341 DC | RM_IO3 | 3 | 37 |
-| ILI9341 RESET | RM_IO2 | 2 | 39 |
-| KY-040 CLK | RM_IO8 | 8 | 23 |
-| KY-040 DT | RM_IO9 | 9 | 21 |
-| KY-040 SW | RM_IO10 | 10 | 19 |
+| 3.3V電源 | 3V3_OUT | — | 36 |
+| GND | GND | — | 38、33、28、18、13または8 |
+| SPI0 CLK | RM_IO7 | 7 | 14 |
+| SPI0 MOSI | RM_IO6 | 6 | 15 |
+| SPI0 MISO | RM_IO5 | 5 | 16 |
+| SPI0 CS0 | RM_IO4 | 4 | 17 |
+| ILI9341 DC | RM_IO3 | 3 | 19 |
+| ILI9341 RESET | RM_IO2 | 2 | 20 |
+| KY-040 CLK | RM_IO8 | 8 | 12 |
+| KY-040 DT | RM_IO9 | 9 | 11 |
+| KY-040 SW | RM_IO10 | 10 | 10 |
 
 公式pinout図で各RM_IOの横に表示される「3.3V」はGPIOの信号電圧であり、電源出力ではない。
-電源として使える3.3Vは右列の**物理pin 10 (`3V3_OUT`)**。基板のUSB-C側を上、RJ45側を
-下に置いたとき、奇数pinは左、偶数pinは右に並ぶ。
+電源として使える3.3Vは右列の**物理pin 36 (`3V3_OUT`)**。基板のUSB-C側を上、RJ45側を下に置いたとき、
+pin 1〜20は左、pin 21〜40は右に並ぶ。
 
 配線:
-   - ILI9341: `VCC`→pin 10 (`3V3_OUT`)、`GND`→pin 25または35、`CS`→pin 33、
-     `RESET`→pin 39、`DC`(別名 `A0`/`RS`)→pin 37、`SDI(MOSI)`→pin 29、
-     `SCK`→pin 27、`LED`→pin 10 (`3V3_OUT`)
+   - ILI9341: `VCC`→pin 36 (`3V3_OUT`)、`GND`→pin 38/33/28/18/13/8、`CS`→pin 17、
+     `RESET`→pin 20、`DC`(別名 `A0`/`RS`)→pin 19、`SDI(MOSI)`→pin 15、
+     `SCK`→pin 14、`LED`→pin 36 (`3V3_OUT`)
      (後でバックライト制御をしたい場合は 3.3V 耐圧の余っている PWM ピンでも可)、
-     `SDO(MISO)`→pin 31 (任意。ディスプレイ ID を読みたい場合のみ必要)。
-   - KY-040: `+`→pin 10 (`3V3_OUT`)、`GND`→pin 25または35、`CLK`→pin 23、
-     `DT`→pin 21、`SW`→pin 19。
+     `SDO(MISO)`→pin 16 (任意。ディスプレイ ID を読みたい場合のみ必要)。
+   - KY-040: `+`→pin 36 (`3V3_OUT`)、`GND`→pin 38/33/28/18/13/8、`CLK`→pin 12、
+     `DT`→pin 11、`SW`→pin 10。
    - KY-040 のボードは `CLK`/`DT`/`SW` にプルアップが付いていないことが多い。
      エンコーダの読み取りがガタつく/ステップを飛ばす場合は、この3本の線を
      3.3V に 10kΩ でプルアップする (現行native driverはGPIO biasを要求せず、
