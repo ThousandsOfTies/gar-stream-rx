@@ -1,4 +1,5 @@
 #include "gar_stream_rx/linux_gpio.hpp"
+#include "gar_stream_rx/gpio_config.hpp"
 
 #include <fcntl.h>
 #include <linux/gpio.h>
@@ -85,13 +86,13 @@ bool GpioInput::get() const {
     return (data.bits & 1U) != 0U;
 }
 
-GpioBothEdges::GpioBothEdges(const std::string& chip_path, std::uint32_t line) {
+GpioBothEdges::GpioBothEdges(const std::string& chip_path, std::uint32_t line, std::uint32_t debounce_us) {
+    const auto config = input_edge_config(GPIO_V2_LINE_FLAG_INPUT |
+        GPIO_V2_LINE_FLAG_EDGE_RISING | GPIO_V2_LINE_FLAG_EDGE_FALLING, debounce_us);
     const int chip_fd = open_chip(chip_path);
     gpio_v2_line_request request{};
     request.offsets[0] = line;
-    request.config.flags = GPIO_V2_LINE_FLAG_INPUT |
-                           GPIO_V2_LINE_FLAG_EDGE_RISING |
-                           GPIO_V2_LINE_FLAG_EDGE_FALLING;
+    request.config = config;
     request.num_lines = 1;
     std::strncpy(request.consumer, "gar-stream-rx", sizeof(request.consumer) - 1);
     if (ioctl(chip_fd, GPIO_V2_GET_LINE_IOCTL, &request) < 0) {
@@ -137,11 +138,13 @@ std::optional<bool> GpioBothEdges::consume() {
     return std::nullopt;
 }
 
-GpioFallingEdge::GpioFallingEdge(const std::string& chip_path, std::uint32_t line) {
+GpioFallingEdge::GpioFallingEdge(const std::string& chip_path, std::uint32_t line, std::uint32_t debounce_us) {
+    const auto config = input_edge_config(GPIO_V2_LINE_FLAG_INPUT |
+        GPIO_V2_LINE_FLAG_EDGE_FALLING, debounce_us);
     const int chip_fd = open_chip(chip_path);
     gpio_v2_line_request request{};
     request.offsets[0] = line;
-    request.config.flags = GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_EDGE_FALLING;
+    request.config = config;
     request.num_lines = 1;
     std::strncpy(request.consumer, "gar-stream-rx", sizeof(request.consumer) - 1);
     if (ioctl(chip_fd, GPIO_V2_GET_LINE_IOCTL, &request) < 0) {

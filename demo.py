@@ -7,12 +7,14 @@ after you've routed SPI0 + free GPIOs with `luckfox-config` (see README.md).
 """
 import colorsys
 import threading
+import os
 import time
 
 from ili9341 import ILI9341
 from ky040 import KY040
 
 CONFIG = {
+    "enc_debounce_us": int(os.environ.get("GAR_ENC_DEBOUNCE_US", "0")),
     "spi_bus": 0,
     "spi_device": 0,
     "spi_max_hz": 10_000_000,  # matches the Lyra's default spidev spi-max-frequency
@@ -117,6 +119,7 @@ def main():
     encoder = KY040(
         CONFIG["enc_clk_gpio"], CONFIG["enc_dt_gpio"], CONFIG["enc_sw_gpio"],
         on_rotate=on_rotate, on_press=on_press,
+        debounce_us=CONFIG["enc_debounce_us"],
     )
     encoder.start()
 

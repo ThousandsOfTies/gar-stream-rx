@@ -275,3 +275,17 @@ stock 6.1.84 imageにない`spi-rockchip.ko`/`spidev.ko`も同じrelease/vermagi
   broadcastが届かないnetworkではRX側の`GAR_STREAM_DISCOVERY_PEERS`へTX addressを追加する。
 - **TXを選べるが映像が出ない**: TXログのreceiver一覧にこのRXが追加されているか、
   TXからRXへのUDP 5600が通るか確認する。
+
+## KY-040のGPIO入力デバウンス
+
+`GAR_ENC_DEBOUNCE_US`で、CLK・DT・SWの入力フィルター要求値をマイクロ秒で指定します。
+アプリ単体の既定値は0、範囲は0〜1000000です。Productが機種ごとの初期値を明示し、
+シミュレータは0で物理タイミングの影響を避けます。
+Python版の初期化は`KY040(..., debounce_us=CONFIG["enc_debounce_us"])`です。
+非0の指定には、gar-toolsの
+`targets/linux-device/runtime/gpio-input/python/gar_gpio_debounce.py`をアプリへ同梱するか、
+そのディレクトリーを`PYTHONPATH`へ追加してください。GPIOのedge・bias設定後に
+Linux GPIO v2へ要求し、対応しないバックエンドで黙って無効化することはありません。
+カーネルがハードウェアまたはソフトウェアで処理し、実効時間はタイマー精度にも依存します。
+高速回転を含む追従性は機種ごとの実機で確認してください。
+native版も同じ環境変数を読み、GPIO確保時に同じデバウンス属性を設定します。

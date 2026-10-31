@@ -39,6 +39,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(test_gpio_config tests/test_gpio_config.cpp)
+    target_link_libraries(test_gpio_config PRIVATE gar_stream_rx_core)
+    target_compile_options(test_gpio_config PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME gpio_config COMMAND test_gpio_config)
+
     add_executable(test_receiver_state tests/test_receiver_state.cpp)
     target_link_libraries(test_receiver_state PRIVATE gar_stream_rx_core)
     target_compile_options(test_receiver_state PRIVATE -Wall -Wextra -Wpedantic -Werror)

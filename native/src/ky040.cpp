@@ -55,11 +55,12 @@ Ky040::Ky040(
     std::uint32_t data_line,
     std::uint32_t switch_line,
     std::function<void(int)> on_rotate,
-    std::function<void()> on_press
+    std::function<void()> on_press,
+    std::uint32_t debounce_us
 )
-    : clock_(gpio_chip, clock_line),
-      data_(gpio_chip, data_line),
-      switch_(gpio_chip, switch_line),
+    : clock_(gpio_chip, clock_line, debounce_us),
+      data_(gpio_chip, data_line, debounce_us),
+      switch_(gpio_chip, switch_line, debounce_us),
       on_rotate_(std::move(on_rotate)),
       on_press_(std::move(on_press)) {}
 
