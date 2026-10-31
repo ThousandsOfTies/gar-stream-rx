@@ -6,8 +6,8 @@ Fill in CONFIG below with the GPIO numbers reported by `luckfox-config show`
 after you've routed SPI0 + free GPIOs with `luckfox-config` (see README.md).
 """
 import colorsys
-import threading
 import os
+import threading
 import time
 
 from ili9341 import ILI9341
