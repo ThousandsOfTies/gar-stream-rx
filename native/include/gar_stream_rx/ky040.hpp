@@ -31,7 +31,8 @@ class Ky040 {
         std::uint32_t data_line,
         std::uint32_t switch_line,
         std::function<void(int)> on_rotate,
-        std::function<void()> on_press
+        std::function<void()> on_press,
+        std::uint32_t debounce_us = 0
     );
     ~Ky040();
 

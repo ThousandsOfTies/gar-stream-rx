@@ -554,7 +554,8 @@ int main(int argc, char** argv) {
             [&monitor] {
                 std::cout << "[input] KY-040 press" << std::endl;
                 invoke_main([&monitor] { monitor.press(); });
-            }
+            },
+            environment_u32("GAR_ENC_DEBOUNCE_US", 0)
         );
 
         GMainLoop* loop = g_main_loop_new(nullptr, FALSE);
@@ -568,7 +569,8 @@ int main(int argc, char** argv) {
         std::cout << "[input] KY-040 gpio chip=" << gpio_chip
                   << " clk=" << environment_u32("GAR_ENC_CLK_GPIO", 20)
                   << " dt=" << environment_u32("GAR_ENC_DT_GPIO", 21)
-                  << " sw=" << environment_u32("GAR_ENC_SW_GPIO", 22) << std::endl;
+                  << " sw=" << environment_u32("GAR_ENC_SW_GPIO", 22)
+                  << " debounce_us=" << environment_u32("GAR_ENC_DEBOUNCE_US", 0) << std::endl;
         g_main_loop_run(loop);
         encoder.stop();
         browser.stop();

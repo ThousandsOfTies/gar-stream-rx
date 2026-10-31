@@ -36,7 +36,7 @@ class GpioInput {
 
 class GpioBothEdges {
   public:
-    GpioBothEdges(const std::string& chip_path, std::uint32_t line);
+    GpioBothEdges(const std::string& chip_path, std::uint32_t line, std::uint32_t debounce_us = 0);
     ~GpioBothEdges();
 
     GpioBothEdges(const GpioBothEdges&) = delete;
@@ -52,7 +52,7 @@ class GpioBothEdges {
 
 class GpioFallingEdge {
   public:
-    GpioFallingEdge(const std::string& chip_path, std::uint32_t line);
+    GpioFallingEdge(const std::string& chip_path, std::uint32_t line, std::uint32_t debounce_us = 0);
     ~GpioFallingEdge();
 
     GpioFallingEdge(const GpioFallingEdge&) = delete;
