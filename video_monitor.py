@@ -30,6 +30,7 @@ from source_browser import (
 )
 
 CONFIG = {
+    "enc_debounce_us": int(os.environ.get("GAR_ENC_DEBOUNCE_US", "0")),
     "spi_bus": 0,
     "spi_device": 0,
     "spi_max_hz": 24_000_000,  # bump via `luckfox-config` SPI speed - see README bandwidth note
@@ -344,6 +345,7 @@ def main():
     encoder = KY040(
         CONFIG["enc_clk_gpio"], CONFIG["enc_dt_gpio"], CONFIG["enc_sw_gpio"],
         on_rotate=monitor.on_rotate, on_press=monitor.on_press,
+        debounce_us=CONFIG["enc_debounce_us"],
     )
     encoder.start()
     monitor.start()
